@@ -4,6 +4,7 @@ import {
   AlertCircle,
   ArrowLeft,
   ArrowRight,
+  Bot,
   Check,
   ChevronDown,
   CircleHelp,
@@ -21,6 +22,7 @@ import {
   RotateCcw,
   Save,
   Search,
+  Send,
   Settings2,
   ShieldCheck,
   Sparkles,
@@ -88,6 +90,12 @@ const defaultFlow: FlowData = {
 
 const jsonSeed = JSON.stringify(defaultFlow, null, 2);
 
+type ProcessAnswer = {
+  nodeId: string;
+  node: FlowNode;
+  confidence: "high" | "medium" | "low";
+};
+
 function IconBadge({ children, tone = "blue" }: { children: React.ReactNode; tone?: "blue" | "amber" | "green" }) {
   return <span className={`icon-badge ${tone}`}>{children}</span>;
 }
@@ -100,6 +108,9 @@ export default function Home() {
   const [showEditor, setShowEditor] = useState(true);
   const [search, setSearch] = useState("");
   const [isLive, setIsLive] = useState(true);
+  const [askQuery, setAskQuery] = useState("");
+  const [askOpen, setAskOpen] = useState(false);
+  const [askAnswer, setAskAnswer] = useState<ProcessAnswer | null>(null);
 
   const currentStep = flowData[currentStepId] ?? flowData.start;
   const stepCount = Object.keys(flowData).length;
@@ -136,6 +147,34 @@ export default function Home() {
     setCurrentStepId("start");
     setHistory([]);
     toast("Default process restored");
+  };
+
+  const askProcess = (query = askQuery) => {
+    const normalized = query.trim().toLowerCase();
+    if (!normalized) {
+      setAskAnswer(null);
+      return;
+    }
+
+    const stopWords = new Set(["how", "what", "when", "where", "why", "should", "handle", "issue", "customer", "account", "with", "from", "that", "this", "first", "say"]);
+    const terms = normalized.split(/[^a-z0-9]+/).filter((term) => term.length > 2 && !stopWords.has(term));
+    const ranked = Object.entries(flowData).map(([nodeId, node]) => {
+      const identity = `${nodeId} ${node.title}`.toLowerCase();
+      const options = node.options.map((option) => option.label).join(" ").toLowerCase();
+      const script = node.script.toLowerCase();
+      const contextBoost = normalized.includes("first") && nodeId === "start" ? 4 : 0;
+      const score = terms.reduce((total, term) => total + (identity.includes(term) ? 3 : 0) + (options.includes(term) ? 2 : 0) + (script.includes(term) ? 1 : 0), contextBoost);
+      return { nodeId, node, score };
+    }).sort((a, b) => b.score - a.score);
+
+    const match = ranked[0];
+    if (!match || match.score === 0) {
+      setAskAnswer(null);
+      toast("No exact process match", { description: "Try a topic like billing, technical support, verification, or escalation." });
+      return;
+    }
+    setCurrentStepId(match.nodeId);
+    setAskAnswer({ nodeId: match.nodeId, node: match.node, confidence: match.score >= Math.max(2, terms.length / 2) ? "high" : "medium" });
   };
 
   return (
@@ -181,8 +220,10 @@ export default function Home() {
         <main className="main-pane">
           <div className="page-heading">
             <div><div className="eyebrow"><Zap size={13} /> LIVE CALL GUIDANCE</div><h1>Agent decision assistant</h1><p>Follow the verified path for a consistent, compliant customer experience.</p></div>
-            <div className="heading-actions"><button className="ghost-button" onClick={restartFlow}><RotateCcw size={15} /> Reset</button><button className="primary-button" onClick={() => toast.success("Session saved", { description: "The current workflow position has been saved locally." })}><Save size={15} /> Save session</button></div>
+            <div className="heading-actions"><button className={`ask-trigger ${askOpen ? "active" : ""}`} onClick={() => setAskOpen(!askOpen)}><Bot size={15} /> Ask the process</button><button className="ghost-button" onClick={restartFlow}><RotateCcw size={15} /> Reset</button><button className="primary-button" onClick={() => toast.success("Session saved", { description: "The current workflow position has been saved locally." })}><Save size={15} /> Save session</button></div>
           </div>
+
+          {askOpen && <section className="ask-panel"><div className="ask-panel-heading"><div className="ask-avatar"><Bot size={17} /></div><div><div className="eyebrow ask-eyebrow">PROCESS COPILOT <span className="beta-pill">LOCAL</span></div><h2>Ask a question in your own words</h2><p>I’ll look through the current process map and point you to the verified answer.</p></div><button className="ask-close" onClick={() => setAskOpen(false)} aria-label="Close process copilot"><X size={16} /></button></div><div className="ask-input-wrap"><input autoFocus value={askQuery} onChange={(event) => setAskQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") askProcess(); }} placeholder="e.g. What should I do if the customer can't verify their account?" /><button className="ask-submit" onClick={() => askProcess()} aria-label="Ask process"><Send size={15} /></button></div><div className="ask-suggestions"><span>Try asking:</span><button onClick={() => { setAskQuery("How do I handle a billing issue?"); askProcess("How do I handle a billing issue?"); }}>billing issue</button><button onClick={() => { setAskQuery("When should I escalate?"); askProcess("When should I escalate?"); }}>when to escalate</button><button onClick={() => { setAskQuery("What do I say first?"); askProcess("What do I say first?"); }}>what do I say first</button></div>{askAnswer && <div className="ask-answer"><div className="answer-top"><span className="answer-label"><Check size={12} /> MATCHED TO PROCESS MAP</span><span className={`confidence-pill ${askAnswer.confidence}`}>{askAnswer.confidence} confidence</span></div><h3>{askAnswer.node.title}</h3><p className="answer-script">“{askAnswer.node.script}”</p><div className="answer-next"><strong>Next approved outcomes</strong><div>{askAnswer.node.options.map((option) => <button key={option.label} onClick={() => navigate(option.next)}>{option.label}<ArrowRight size={13} /></button>)}</div></div></div>}</section>}
 
           <div className="metric-row">
             <div className="metric-card"><IconBadge tone="blue"><Play size={15} /></IconBadge><div><small>SESSION STATUS</small><strong>{isLive ? "In progress" : "Paused"}</strong></div><button className={`live-toggle ${isLive ? "on" : ""}`} onClick={() => setIsLive(!isLive)}><span /></button></div>
